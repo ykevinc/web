@@ -1,9 +1,8 @@
-package web_test
+package web
 
 import (
 	"crypto/sha1"
 	"fmt"
-	"github.com/gocraft/web"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -43,36 +42,36 @@ type BenchContextC struct {
 	*BenchContextB
 }
 
-func (c *BenchContext) Action(w web.ResponseWriter, r *web.Request) {
+func (c *BenchContext) Action(w ResponseWriter, r *Request) {
 	fmt.Fprintf(w, "hello")
 }
 
-func (c *BenchContextB) Action(w web.ResponseWriter, r *web.Request) {
+func (c *BenchContextB) Action(w ResponseWriter, r *Request) {
 	fmt.Fprintf(w, c.MyField)
 }
 
-func (c *BenchContextC) Action(w web.ResponseWriter, r *web.Request) {
+func (c *BenchContextC) Action(w ResponseWriter, r *Request) {
 	fmt.Fprintf(w, "hello")
 }
 
-func (c *BenchContext) Middleware(rw web.ResponseWriter, r *web.Request, next web.NextMiddlewareFunc) {
+func (c *BenchContext) Middleware(rw ResponseWriter, r *Request, next NextMiddlewareFunc) {
 	next(rw, r)
 }
 
-func (c *BenchContextB) Middleware(rw web.ResponseWriter, r *web.Request, next web.NextMiddlewareFunc) {
+func (c *BenchContextB) Middleware(rw ResponseWriter, r *Request, next NextMiddlewareFunc) {
 	next(rw, r)
 }
 
-func (c *BenchContextC) Middleware(rw web.ResponseWriter, r *web.Request, next web.NextMiddlewareFunc) {
+func (c *BenchContextC) Middleware(rw ResponseWriter, r *Request, next NextMiddlewareFunc) {
 	next(rw, r)
 }
 
-func gocraftWebHandler(rw web.ResponseWriter, r *web.Request) {
+func gocraftWebHandler(rw ResponseWriter, r *Request) {
 	fmt.Fprintf(rw, "hello")
 }
 
 func gocraftWebRouterFor(namespaces []string, resources []string) http.Handler {
-	router := web.New(BenchContext{})
+	router := New(BenchContext{})
 	for _, ns := range namespaces {
 		subrouter := router.Subrouter(BenchContext{}, "/"+ns)
 		for _, res := range resources {
@@ -87,7 +86,7 @@ func gocraftWebRouterFor(namespaces []string, resources []string) http.Handler {
 }
 
 func BenchmarkGocraftWeb_Simple(b *testing.B) {
-	router := web.New(BenchContext{})
+	router := New(BenchContext{})
 	router.Get("/action", gocraftWebHandler)
 
 	rw, req := testRequest("GET", "/action")
@@ -119,7 +118,7 @@ func BenchmarkGocraftWeb_Route3000(b *testing.B) {
 }
 
 func BenchmarkGocraftWeb_Middleware(b *testing.B) {
-	router := web.New(BenchContext{})
+	router := New(BenchContext{})
 	router.Middleware((*BenchContext).Middleware)
 	router.Middleware((*BenchContext).Middleware)
 	routerB := router.Subrouter(BenchContextB{}, "/b")
@@ -141,11 +140,11 @@ func BenchmarkGocraftWeb_Middleware(b *testing.B) {
 
 // All middlweare/handlers don't accept context here.
 func BenchmarkGocraftWeb_Generic(b *testing.B) {
-	nextMw := func(rw web.ResponseWriter, r *web.Request, next web.NextMiddlewareFunc) {
+	nextMw := func(rw ResponseWriter, r *Request, next NextMiddlewareFunc) {
 		next(rw, r)
 	}
 
-	router := web.New(BenchContext{})
+	router := New(BenchContext{})
 	router.Middleware(nextMw)
 	router.Middleware(nextMw)
 	routerB := router.Subrouter(BenchContextB{}, "/b")
@@ -169,8 +168,8 @@ func BenchmarkGocraftWeb_Generic(b *testing.B) {
 func BenchmarkGocraftWeb_Composite(b *testing.B) {
 	namespaces, resources, requests := resourceSetup(10)
 
-	router := web.New(BenchContext{})
-	router.Middleware(func(c *BenchContext, rw web.ResponseWriter, r *web.Request, next web.NextMiddlewareFunc) {
+	router := New(BenchContext{})
+	router.Middleware(func(c *BenchContext, rw ResponseWriter, r *Request, next NextMiddlewareFunc) {
 		c.MyField = r.URL.Path
 		next(rw, r)
 	})
@@ -215,7 +214,7 @@ func resourceSetup(N int) (namespaces []string, resources []string, requests []*
 	namespaces = []string{"admin", "api", "site"}
 	resources = []string{}
 
-	for i := 0; i < N; i += 1 {
+	for i := 0; i < N; i++ {
 		sha1 := sha1.New()
 		io.WriteString(sha1, fmt.Sprintf("%d", i))
 		strResource := fmt.Sprintf("%x", sha1.Sum(nil))
@@ -242,19 +241,19 @@ func resourceSetup(N int) (namespaces []string, resources []string, requests []*
 
 func benchmarkRoutes(b *testing.B, handler http.Handler, requests []*http.Request) {
 	recorder := &NullWriter{}
-	reqId := 0
+	reqID := 0
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if reqId >= len(requests) {
-			reqId = 0
+		if reqID >= len(requests) {
+			reqID = 0
 		}
-		req := requests[reqId]
+		req := requests[reqID]
 		handler.ServeHTTP(recorder, req)
 
 		//if recorder.Code != 200 {
 		//	panic("wat")
 		//}
 
-		reqId += 1
+		reqID++
 	}
 }

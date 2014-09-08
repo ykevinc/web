@@ -7,9 +7,8 @@ import (
 	"runtime"
 )
 
-// TODO: normalize the exportedness
 type middlewareClosure struct {
-	AppResponseWriter
+	appResponseWriter
 	Request
 	Routers                []*Router
 	Contexts               []reflect.Value
@@ -20,7 +19,7 @@ type middlewareClosure struct {
 	Next                   NextMiddlewareFunc
 }
 
-// This is the entry point for servering all requests
+// This is the entry point for servering all requests.
 func (rootRouter *Router) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 
 	// Manually create a closure. These variables are needed in middlewareStack.
@@ -29,7 +28,7 @@ func (rootRouter *Router) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	// just have one (closure *middlewareClosure).
 	var closure middlewareClosure
 	closure.Request.Request = r
-	closure.AppResponseWriter.ResponseWriter = rw
+	closure.appResponseWriter.ResponseWriter = rw
 	closure.Routers = make([]*Router, 1, rootRouter.maxChildrenDepth)
 	closure.Routers[0] = rootRouter
 	closure.Contexts = make([]reflect.Value, 1, rootRouter.maxChildrenDepth)
@@ -41,12 +40,12 @@ func (rootRouter *Router) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	// Handle errors
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			rootRouter.handlePanic(&closure.AppResponseWriter, &closure.Request, recovered)
+			rootRouter.handlePanic(&closure.appResponseWriter, &closure.Request, recovered)
 		}
 	}()
 
 	next := middlewareStack(&closure)
-	next(&closure.AppResponseWriter, &closure.Request)
+	next(&closure.appResponseWriter, &closure.Request)
 }
 
 // This function executes the middleware stack. It does so creating/returning an anonymous function/closure.
@@ -94,14 +93,14 @@ func middlewareStack(closure *middlewareClosure) NextMiddlewareFunc {
 			}
 
 			closure.currentMiddlewareIndex = 0
-			closure.currentRouterIndex += 1
+			closure.currentRouterIndex++
 			routersLen := len(closure.Routers)
 			for closure.currentRouterIndex < routersLen {
 				closure.currentMiddlewareLen = len(closure.Routers[closure.currentRouterIndex].middleware)
 				if closure.currentMiddlewareLen > 0 {
 					break
 				}
-				closure.currentRouterIndex += 1
+				closure.currentRouterIndex++
 			}
 			if closure.currentRouterIndex < routersLen {
 				middleware = closure.Routers[closure.currentRouterIndex].middleware[closure.currentMiddlewareIndex]
@@ -116,7 +115,7 @@ func middlewareStack(closure *middlewareClosure) NextMiddlewareFunc {
 			}
 		}
 
-		closure.currentMiddlewareIndex += 1
+		closure.currentMiddlewareIndex++
 
 		// Invoke middleware.
 		if middleware != nil {
@@ -144,23 +143,33 @@ func (mw *middlewareHandler) invoke(ctx reflect.Value, rw ResponseWriter, req *R
 // 	}
 // }
 
-func calculateRoute(rootRouter *Router, req *Request) (*Route, map[string]string) {
-	var leaf *PathLeaf
+func calculateRoute(rootRouter *Router, req *Request) (*route, map[string]string) {
+	var leaf *pathLeaf
 	var wildcardMap map[string]string
-	tree, ok := rootRouter.root[HttpMethod(req.Method)]
+	method := httpMethod(req.Method)
+	tree, ok := rootRouter.root[method]
 	if ok {
 		leaf, wildcardMap = tree.Match(req.URL.Path)
 	}
+
+	// If no match and this is a HEAD, route on GET.
+	if leaf == nil && method == httpMethodHead {
+		tree, ok := rootRouter.root[httpMethodGet]
+		if ok {
+			leaf, wildcardMap = tree.Match(req.URL.Path)
+		}
+	}
+
 	if leaf == nil {
 		return nil, nil
-	} else {
-		return leaf.route, wildcardMap
 	}
+
+	return leaf.route, wildcardMap
 }
 
 // given the route (and target router), return [root router, child router, ..., leaf route's router]
 // Use the memory in routers to store this information
-func routersFor(route *Route, routers []*Router) []*Router {
+func routersFor(route *route, routers []*Router) []*Router {
 	routers = routers[:0]
 	curRouter := route.Router
 	for curRouter != nil {
@@ -173,8 +182,8 @@ func routersFor(route *Route, routers []*Router) []*Router {
 	e := len(routers) - 1
 	for s < e {
 		routers[s], routers[e] = routers[e], routers[s]
-		s += 1
-		e -= 1
+		s++
+		e--
 	}
 
 	return routers
@@ -187,7 +196,7 @@ func routersFor(route *Route, routers []*Router) []*Router {
 func contextsFor(contexts []reflect.Value, routers []*Router) []reflect.Value {
 	routersLen := len(routers)
 
-	for i := 1; i < routersLen; i += 1 {
+	for i := 1; i < routersLen; i++ {
 		var ctx reflect.Value
 		if reflect.TypeOf(routers[i].context) == reflect.TypeOf(routers[i-1].context) {
 			ctx = contexts[i-1]
@@ -206,7 +215,7 @@ func contextsFor(contexts []reflect.Value, routers []*Router) []reflect.Value {
 // If there's a panic in the root middleware (so that we don't have a route/target), then invoke the root handler or default.
 // If there's a panic in other middleware, then invoke the target action's function.
 // If there's a panic in the action handler, then invoke the target action's function.
-func (rootRouter *Router) handlePanic(rw *AppResponseWriter, req *Request, err interface{}) {
+func (rootRouter *Router) handlePanic(rw *appResponseWriter, req *Request, err interface{}) {
 	var targetRouter *Router  // This will be set to the router we want to use the errorHandler on.
 	var context reflect.Value // this is the context of the target router
 
@@ -224,8 +233,9 @@ func (rootRouter *Router) handlePanic(rw *AppResponseWriter, req *Request, err i
 			curContextStruct := reflect.Indirect(context)
 			if reflect.TypeOf(targetRouter.context) != curContextStruct.Type() {
 				context = curContextStruct.Field(0)
+
 				if reflect.Indirect(context).Type() != reflect.TypeOf(targetRouter.context) {
-					panic("oshit why")
+					panic("bug: shouldn't get here")
 				}
 			}
 		}
@@ -241,8 +251,7 @@ func (rootRouter *Router) handlePanic(rw *AppResponseWriter, req *Request, err i
 	stack := make([]byte, size)
 	stack = stack[:runtime.Stack(stack, false)]
 
-	ERROR.Printf("%v\n", err)
-	ERROR.Printf("%s\n", string(stack))
+	PanicHandler.Panic(fmt.Sprint(req.URL), err, string(stack))
 }
 
 func invoke(handler reflect.Value, ctx reflect.Value, values []reflect.Value) {
@@ -271,5 +280,8 @@ func clone(ctx interface {}) reflect.Value {
 	return clonedContext
 }
 
-var DefaultNotFoundResponse string = "Not Found"
-var DefaultPanicResponse string = "Application Error"
+// DefaultNotFoundResponse is the default text rendered when no route is found and no NotFound handlers are present.
+var DefaultNotFoundResponse = "Not Found"
+
+// DefaultPanicResponse is the default text rendered when a panic occurs and no Error handlers are present.
+var DefaultPanicResponse = "Application Error"

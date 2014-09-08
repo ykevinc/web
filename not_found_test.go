@@ -1,61 +1,51 @@
-package web_test
+package web
 
 import (
 	"fmt"
-	"github.com/gocraft/web"
-	. "launchpad.net/gocheck"
 	"net/http"
-	"strings"
+	"testing"
 )
 
-type NotFoundTestSuite struct{}
-
-var _ = Suite(&NotFoundTestSuite{})
-
-func (s *NotFoundTestSuite) TestNoHandler(c *C) {
-	router := web.New(Context{})
-
-	rw, req := newTestRequest("GET", "/this_path_doesnt_exist")
-	router.ServeHTTP(rw, req)
-	c.Assert(strings.TrimSpace(string(rw.Body.Bytes())), Equals, "Not Found")
-	c.Assert(rw.Code, Equals, http.StatusNotFound)
-}
-
-func (s *NotFoundTestSuite) TestBadMethod(c *C) {
-	router := web.New(Context{})
-
-	rw, req := newTestRequest("POOP", "/this_path_doesnt_exist")
-	router.ServeHTTP(rw, req)
-	c.Assert(strings.TrimSpace(string(rw.Body.Bytes())), Equals, "Not Found")
-	c.Assert(rw.Code, Equals, http.StatusNotFound)
-}
-
-func MyNotFoundHandler(rw web.ResponseWriter, r *web.Request) {
+func MyNotFoundHandler(rw ResponseWriter, r *Request) {
 	rw.WriteHeader(http.StatusNotFound)
 	fmt.Fprintf(rw, "My Not Found")
 }
 
-func (s *NotFoundTestSuite) TestWithHandler(c *C) {
-	router := web.New(Context{})
-	router.NotFound(MyNotFoundHandler)
-
-	rw, req := newTestRequest("GET", "/this_path_doesnt_exist")
-	router.ServeHTTP(rw, req)
-	c.Assert(strings.TrimSpace(string(rw.Body.Bytes())), Equals, "My Not Found")
-	c.Assert(rw.Code, Equals, http.StatusNotFound)
-}
-
-func (c *Context) HandlerWithContext(rw web.ResponseWriter, r *web.Request) {
+func (c *Context) HandlerWithContext(rw ResponseWriter, r *Request) {
 	rw.WriteHeader(http.StatusNotFound)
 	fmt.Fprintf(rw, "My Not Found With Context")
 }
 
-func (s *NotFoundTestSuite) TestWithRootContext(c *C) {
-	router := web.New(Context{})
+func TestNoHandler(t *testing.T) {
+	router := New(Context{})
+
+	rw, req := newTestRequest("GET", "/this_path_doesnt_exist")
+	router.ServeHTTP(rw, req)
+	assertResponse(t, rw, "Not Found", http.StatusNotFound)
+}
+
+func TestBadMethod(t *testing.T) {
+	router := New(Context{})
+
+	rw, req := newTestRequest("POOP", "/this_path_doesnt_exist")
+	router.ServeHTTP(rw, req)
+	assertResponse(t, rw, "Not Found", http.StatusNotFound)
+}
+
+func TestWithHandler(t *testing.T) {
+	router := New(Context{})
+	router.NotFound(MyNotFoundHandler)
+
+	rw, req := newTestRequest("GET", "/this_path_doesnt_exist")
+	router.ServeHTTP(rw, req)
+	assertResponse(t, rw, "My Not Found", http.StatusNotFound)
+}
+
+func TestWithRootContext(t *testing.T) {
+	router := New(Context{})
 	router.NotFound((*Context).HandlerWithContext)
 
 	rw, req := newTestRequest("GET", "/this_path_doesnt_exist")
 	router.ServeHTTP(rw, req)
-	c.Assert(strings.TrimSpace(string(rw.Body.Bytes())), Equals, "My Not Found With Context")
-	c.Assert(rw.Code, Equals, http.StatusNotFound)
+	assertResponse(t, rw, "My Not Found With Context", http.StatusNotFound)
 }

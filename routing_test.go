@@ -1,9 +1,8 @@
-package web_test
+package web
 
 import (
 	"bytes"
 	"fmt"
-	"github.com/gocraft/web"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -55,7 +54,7 @@ func stringifyMap(m map[string]string) string {
 }
 
 func TestRoutes(t *testing.T) {
-	router := web.New(Ctx{})
+	router := New(Ctx{})
 
 	table := []routeTest{
 		{
@@ -144,7 +143,7 @@ func TestRoutes(t *testing.T) {
 	for _, rt := range table {
 		// func: ensure closure is created per iteraction (it fails otherwise)
 		func(exp string) {
-			router.Get(rt.route, func(w web.ResponseWriter, r *web.Request) {
+			router.Get(rt.route, func(w ResponseWriter, r *Request) {
 				w.Header().Set("X-VARS", stringifyMap(r.PathParams))
 				fmt.Fprintf(w, exp)
 			})
@@ -173,7 +172,7 @@ func TestRoutes(t *testing.T) {
 }
 
 func TestRoutesWithPrefix(t *testing.T) {
-	router := web.NewWithPrefix(Ctx{}, "/v1")
+	router := NewWithPrefix(Ctx{}, "/v1")
 
 	table := []routeTest{
 		{
@@ -262,7 +261,7 @@ func TestRoutesWithPrefix(t *testing.T) {
 	for _, rt := range table {
 		// func: ensure closure is created per iteraction (it fails otherwise)
 		func(exp string) {
-			router.Get(rt.route, func(w web.ResponseWriter, r *web.Request) {
+			router.Get(rt.route, func(w ResponseWriter, r *Request) {
 				w.Header().Set("X-VARS", stringifyMap(r.PathParams))
 				fmt.Fprintf(w, exp)
 			})
@@ -288,4 +287,90 @@ func TestRoutesWithPrefix(t *testing.T) {
 			t.Error("Test:", rt, " Didn't get Vars=", rt.vars, ". Got Vars=", vars)
 		}
 	}
+}
+
+func TestRouteVerbs(t *testing.T) {
+	router := New(Context{})
+	router.Get("/a", func(w ResponseWriter, r *Request) {
+		fmt.Fprintf(w, "GET")
+	})
+	router.Put("/a", func(w ResponseWriter, r *Request) {
+		fmt.Fprintf(w, "PUT")
+	})
+	router.Post("/a", func(w ResponseWriter, r *Request) {
+		fmt.Fprintf(w, "POST")
+	})
+	router.Delete("/a", func(w ResponseWriter, r *Request) {
+		fmt.Fprintf(w, "DELETE")
+	})
+	router.Patch("/a", func(w ResponseWriter, r *Request) {
+		fmt.Fprintf(w, "PATCH")
+	})
+	router.Head("/a", func(w ResponseWriter, r *Request) {
+		fmt.Fprintf(w, "HEAD")
+	})
+
+	for _, method := range httpMethods {
+		method := string(method)
+
+		recorder := httptest.NewRecorder()
+		request, _ := http.NewRequest(method, "/a", nil)
+
+		router.ServeHTTP(recorder, request)
+
+		if recorder.Code != 200 {
+			t.Error("Test:", method, " Didn't get Code=200. Got Code=", recorder.Code)
+		}
+
+		body := strings.TrimSpace(string(recorder.Body.Bytes()))
+		if body != method {
+			t.Error("Test:", method, " Didn't get Body=", method, ". Got Body=", body)
+		}
+	}
+}
+
+func TestRouteHead(t *testing.T) {
+	router := New(Context{})
+	router.Get("/a", (*Context).A)
+
+	rw, req := newTestRequest("GET", "/a")
+	router.ServeHTTP(rw, req)
+	assertResponse(t, rw, "context-A", 200)
+
+	rw, req = newTestRequest("HEAD", "/a")
+	router.ServeHTTP(rw, req)
+	assertResponse(t, rw, "context-A", 200)
+}
+
+func TestIsRouted(t *testing.T) {
+	router := New(Context{})
+	router.Middleware(func(w ResponseWriter, r *Request, next NextMiddlewareFunc) {
+		if r.IsRouted() {
+			t.Error("Shouldn't be routed yet but was.")
+		}
+		if r.RoutePath() != "" {
+			t.Error("Shouldn't have a route path yet.")
+		}
+		next(w, r)
+		if !r.IsRouted() {
+			t.Error("Should have been routed but wasn't.")
+		}
+	})
+	subrouter := router.Subrouter(Context{}, "")
+	subrouter.Middleware(func(w ResponseWriter, r *Request, next NextMiddlewareFunc) {
+		if !r.IsRouted() {
+			t.Error("Should have been routed but wasn't.")
+		}
+		next(w, r)
+		if !r.IsRouted() {
+			t.Error("Should have been routed but wasn't.")
+		}
+	})
+	subrouter.Get("/a", func(w ResponseWriter, r *Request) {
+		fmt.Fprintf(w, r.RoutePath())
+	})
+
+	rw, req := newTestRequest("GET", "/a")
+	router.ServeHTTP(rw, req)
+	assertResponse(t, rw, "/a", 200)
 }

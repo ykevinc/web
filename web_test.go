@@ -1,24 +1,39 @@
-package web_test
+package web
 
 import (
 	"fmt"
-	"github.com/gocraft/web"
-	. "launchpad.net/gocheck"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
 )
 
 //
-// This file is the "driver" for the test suite. We're using gocheck.
 // This file will contain helpers and general things the rest of the suite needs
 //
 
-//
-// gocheck: hook into "go test"
-//
-func Test(t *testing.T) { TestingT(t) }
+type nullPanicReporter struct{}
+
+func (l nullPanicReporter) Panic(url string, err interface{}, stack string) {
+	// no op
+}
+func init() {
+	// This disables printing panics to stderr during testing, because that is very noisy,
+	// and we purposefully test some panics.
+	PanicHandler = nullPanicReporter{}
+}
+
+// Return's the caller's caller info.
+func callerInfo() string {
+	_, file, line, ok := runtime.Caller(2)
+	if !ok {
+		return ""
+	}
+	parts := strings.Split(file, "/")
+	file = parts[len(parts)-1]
+	return fmt.Sprintf("%s:%d", file, line)
+}
 
 // Make a testing request
 func newTestRequest(method, path string) (*httptest.ResponseRecorder, *http.Request) {
@@ -28,9 +43,13 @@ func newTestRequest(method, path string) (*httptest.ResponseRecorder, *http.Requ
 	return recorder, request
 }
 
-func assertResponse(c *C, rr *httptest.ResponseRecorder, body string, code int) {
-	c.Assert(strings.TrimSpace(string(rr.Body.Bytes())), Equals, body)
-	c.Assert(rr.Code, Equals, code)
+func assertResponse(t *testing.T, rr *httptest.ResponseRecorder, body string, code int) {
+	if gotBody := strings.TrimSpace(string(rr.Body.Bytes())); body != gotBody {
+		t.Errorf("assertResponse: expected body to be %s but got %s. (caller: %s)", body, gotBody, callerInfo())
+	}
+	if code != rr.Code {
+		t.Errorf("assertResponse: expected code to be %d but got %d. (caller: %s)", code, rr.Code, callerInfo())
+	}
 }
 
 //
@@ -42,7 +61,7 @@ type AdminContext struct {
 	*Context
 }
 
-type ApiContext struct {
+type APIContext struct {
 	*Context
 }
 
@@ -54,52 +73,52 @@ type TicketsContext struct {
 	*AdminContext
 }
 
-func (c *Context) ErrorMiddleware(w web.ResponseWriter, r *web.Request, next web.NextMiddlewareFunc) {
+func (c *Context) ErrorMiddleware(w ResponseWriter, r *Request, next NextMiddlewareFunc) {
 	var x, y int
 	fmt.Fprintln(w, x/y)
 }
 
-func (c *Context) ErrorHandler(w web.ResponseWriter, r *web.Request, err interface{}) {
+func (c *Context) ErrorHandler(w ResponseWriter, r *Request, err interface{}) {
 	w.WriteHeader(http.StatusInternalServerError)
 	fmt.Fprintf(w, "My Error")
 }
 
-func (c *Context) ErrorHandlerSecondary(w web.ResponseWriter, r *web.Request, err interface{}) {
+func (c *Context) ErrorHandlerSecondary(w ResponseWriter, r *Request, err interface{}) {
 	w.WriteHeader(http.StatusInternalServerError)
 	fmt.Fprintf(w, "My Secondary Error")
 }
 
-func (c *Context) ErrorAction(w web.ResponseWriter, r *web.Request) {
+func (c *Context) ErrorAction(w ResponseWriter, r *Request) {
 	var x, y int
 	fmt.Fprintln(w, x/y)
 }
 
-func (c *AdminContext) ErrorMiddleware(w web.ResponseWriter, r *web.Request, next web.NextMiddlewareFunc) {
+func (c *AdminContext) ErrorMiddleware(w ResponseWriter, r *Request, next NextMiddlewareFunc) {
 	var x, y int
 	fmt.Fprintln(w, x/y)
 }
 
-func (c *AdminContext) ErrorHandler(w web.ResponseWriter, r *web.Request, err interface{}) {
+func (c *AdminContext) ErrorHandler(w ResponseWriter, r *Request, err interface{}) {
 	w.WriteHeader(http.StatusInternalServerError)
 	fmt.Fprintf(w, "Admin Error")
 }
 
-func (c *AdminContext) ErrorAction(w web.ResponseWriter, r *web.Request) {
+func (c *AdminContext) ErrorAction(w ResponseWriter, r *Request) {
 	var x, y int
 	fmt.Fprintln(w, x/y)
 }
 
-func (c *ApiContext) ErrorHandler(w web.ResponseWriter, r *web.Request, err interface{}) {
+func (c *APIContext) ErrorHandler(w ResponseWriter, r *Request, err interface{}) {
 	w.WriteHeader(http.StatusInternalServerError)
 	fmt.Fprintf(w, "Api Error")
 }
 
-func (c *ApiContext) ErrorAction(w web.ResponseWriter, r *web.Request) {
+func (c *APIContext) ErrorAction(w ResponseWriter, r *Request) {
 	var x, y int
 	fmt.Fprintln(w, x/y)
 }
 
-func (c *TicketsContext) ErrorAction(w web.ResponseWriter, r *web.Request) {
+func (c *TicketsContext) ErrorAction(w ResponseWriter, r *Request) {
 	var x, y int
 	fmt.Fprintln(w, x/y)
 }

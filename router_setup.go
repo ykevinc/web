@@ -5,18 +5,20 @@ import (
 	"strings"
 )
 
-type HttpMethod string
+type httpMethod string
 
 const (
-	HttpMethodGet    = HttpMethod("GET")
-	HttpMethodPost   = HttpMethod("POST")
-	HttpMethodPut    = HttpMethod("PUT")
-	HttpMethodDelete = HttpMethod("DELETE")
-	HttpMethodPatch  = HttpMethod("PATCH")
+	httpMethodGet    = httpMethod("GET")
+	httpMethodPost   = httpMethod("POST")
+	httpMethodPut    = httpMethod("PUT")
+	httpMethodDelete = httpMethod("DELETE")
+	httpMethodPatch  = httpMethod("PATCH")
+	httpMethodHead   = httpMethod("HEAD")
 )
 
-var HttpMethods = []HttpMethod{HttpMethodGet, HttpMethodPost, HttpMethodPut, HttpMethodDelete, HttpMethodPatch}
+var httpMethods = []httpMethod{httpMethodGet, httpMethodPost, httpMethodPut, httpMethodDelete, httpMethodPatch, httpMethodHead}
 
+// Router implements net/http's Handler interface and is what you attach middleware, routes/handlers, and subrouters to.
 type Router struct {
 	// Hierarchy:
 	parent           *Router // nil if root router.
@@ -31,10 +33,10 @@ type Router struct {
 
 	// Routeset contents:
 	middleware []*middlewareHandler
-	routes     []*Route
+	routes     []*route
 
 	// The root pathnode is the same for a tree of Routers
-	root map[HttpMethod]*PathNode
+	root map[httpMethod]*pathNode
 
 	// This can can be set on any router. The target's ErrorHandler will be invoked if it exists
 	errorHandler reflect.Value
@@ -44,9 +46,23 @@ type Router struct {
 	notFoundHandler reflect.Value
 }
 
-type Route struct {
+// NextMiddlewareFunc are functions passed into your middleware. To advance the middleware, call the function.
+// You should usually pass the existing ResponseWriter and *Request into the next middlware, but you can
+// chose to swap them if you want to modify values or capture things written to the ResponseWriter.
+type NextMiddlewareFunc func(ResponseWriter, *Request)
+
+// GenericMiddleware are middleware that doesn't have or need a context. General purpose middleware, such as
+// static file serving, has this signature. If your middlware doesn't need a context, you can use this
+// signature to get a small performance boost.
+type GenericMiddleware func(ResponseWriter, *Request, NextMiddlewareFunc)
+
+// GenericHandler are handlers that don't have or need a context. If your handler doesn't need a context,
+// you can use this signature to get a small performance boost.
+type GenericHandler func(ResponseWriter, *Request)
+
+type route struct {
 	Router  *Router
-	Method  HttpMethod
+	Method  httpMethod
 	Path    string
 	Handler *actionHandler
 }
@@ -63,10 +79,11 @@ type actionHandler struct {
 	GenericHandler GenericHandler
 }
 
-type NextMiddlewareFunc func(ResponseWriter, *Request)
-type GenericMiddleware func(ResponseWriter, *Request, NextMiddlewareFunc)
-type GenericHandler func(ResponseWriter, *Request)
+var emptyInterfaceType = reflect.TypeOf((*interface{})(nil)).Elem()
 
+// New returns a new router with context type ctx. ctx should be a struct instance,
+// whose purpose is to communicate type information. On each request, an instance of this
+// context type will be automatically allocated and sent to handlers.
 func New(ctx interface{}) *Router {
 	validateContext(ctx, nil)
 
@@ -74,13 +91,15 @@ func New(ctx interface{}) *Router {
 	r.context = ctx
 	r.pathPrefix = "/"
 	r.maxChildrenDepth = 1
-	r.root = make(map[HttpMethod]*PathNode)
-	for _, method := range HttpMethods {
+	r.root = make(map[httpMethod]*pathNode)
+	for _, method := range httpMethods {
 		r.root[method] = newPathNode()
 	}
 	return r
 }
 
+// NewWithPrefix returns a new router (see New) but each route will have an implicit prefix.
+// For instance, with pathPrefix = "/api/v2", all routes under this router will begin with "/api/v2".
 func NewWithPrefix(ctx interface{}, pathPrefix string) *Router {
 	r := New(ctx)
 	r.pathPrefix = pathPrefix
@@ -88,6 +107,10 @@ func NewWithPrefix(ctx interface{}, pathPrefix string) *Router {
 	return r
 }
 
+// Subrouter attaches a new subrouter to the specified router and returns it.
+// You can use the same context or pass a new one. If you pass a new one, it must
+// embed a pointer to the previous context in the first slot. You can also pass
+// a pathPrefix that each route will have. If "" is passed, then no path prefix is applied.
 func (r *Router) Subrouter(ctx interface{}, pathPrefix string) *Router {
 	validateContext(ctx, reflect.TypeOf(r.context))
 
@@ -111,6 +134,7 @@ func (r *Router) Subrouter(ctx interface{}, pathPrefix string) *Router {
 	return newRouter
 }
 
+// Middleware adds the specified middleware tot he router and returns the router.
 func (r *Router) Middleware(fn interface{}) *Router {
 	vfn := reflect.ValueOf(fn)
 	validateMiddleware(vfn, reflect.TypeOf(r.context))
@@ -123,49 +147,61 @@ func (r *Router) Middleware(fn interface{}) *Router {
 	return r
 }
 
-func (r *Router) Error(fn interface{}) {
+// Error sets the specified function as the error handler (when panics happen) and returns the router.
+func (r *Router) Error(fn interface{}) *Router {
 	vfn := reflect.ValueOf(fn)
 	validateErrorHandler(vfn, reflect.TypeOf(r.context))
 	r.errorHandler = vfn
+	return r
 }
 
-func (r *Router) NotFound(fn interface{}) {
+// NotFound sets the specified function as the not-found handler (when no route matches) and returns the router.
+// Note that only the root router can have a NotFound handler.
+func (r *Router) NotFound(fn interface{}) *Router {
 	if r.parent != nil {
 		panic("You can only set a NotFoundHandler on the root router.")
 	}
 	vfn := reflect.ValueOf(fn)
 	validateNotFoundHandler(vfn, reflect.TypeOf(r.context))
 	r.notFoundHandler = vfn
+	return r
 }
 
+// Get will add a route to the router that matches on GET requests and the specified path.
 func (r *Router) Get(path string, fn interface{}) *Router {
-	return r.addRoute(HttpMethodGet, path, fn)
+	return r.addRoute(httpMethodGet, path, fn)
 }
 
+// Post will add a route to the router that matches on POST requests and the specified path.
 func (r *Router) Post(path string, fn interface{}) *Router {
-	return r.addRoute(HttpMethodPost, path, fn)
+	return r.addRoute(httpMethodPost, path, fn)
 }
 
+// Put will add a route to the router that matches on PUT requests and the specified path.
 func (r *Router) Put(path string, fn interface{}) *Router {
-	return r.addRoute(HttpMethodPut, path, fn)
+	return r.addRoute(httpMethodPut, path, fn)
 }
 
+// Delete will add a route to the router that matches on DELETE requests and the specified path.
 func (r *Router) Delete(path string, fn interface{}) *Router {
-	return r.addRoute(HttpMethodDelete, path, fn)
+	return r.addRoute(httpMethodDelete, path, fn)
 }
 
+// Patch will add a route to the router that matches on PATCH requests and the specified path.
 func (r *Router) Patch(path string, fn interface{}) *Router {
-	return r.addRoute(HttpMethodPatch, path, fn)
+	return r.addRoute(httpMethodPatch, path, fn)
 }
 
-//
-//
-//
-func (r *Router) addRoute(method HttpMethod, path string, fn interface{}) *Router {
+// Head will add a route to the router that matches on HEAD requests and the specified path.
+func (r *Router) Head(path string, fn interface{}) *Router {
+	return r.addRoute(httpMethodHead, path, fn)
+}
+
+func (r *Router) addRoute(method httpMethod, path string, fn interface{}) *Router {
 	vfn := reflect.ValueOf(fn)
 	validateHandler(vfn, reflect.TypeOf(r.context))
 	fullPath := appendPath(r.pathPrefix, path)
-	route := &Route{Method: method, Path: fullPath, Router: r}
+	route := &route{Method: method, Path: fullPath, Router: r}
 	if vfn.Type().NumIn() == 2 {
 		route.Handler = &actionHandler{Generic: true, GenericHandler: fn.(func(ResponseWriter, *Request))}
 	} else {
@@ -227,8 +263,7 @@ func validateHandler(vfn reflect.Value, ctxType reflect.Type) {
 func validateErrorHandler(vfn reflect.Value, ctxType reflect.Type) {
 	var req *Request
 	var resp func() ResponseWriter
-	var interfaceType func() interface{} // This is weird. I need to get an interface{} reflect.Type; var x interface{}; TypeOf(x) doesn't work, because it returns nil
-	if !isValidHandler(vfn, ctxType, reflect.TypeOf(resp).Out(0), reflect.TypeOf(req), reflect.TypeOf(interfaceType).Out(0)) {
+	if !isValidHandler(vfn, ctxType, reflect.TypeOf(resp).Out(0), reflect.TypeOf(req), emptyInterfaceType) {
 		panic(instructiveMessage(vfn, "an error handler", "error handler", "rw web.ResponseWriter, req *web.Request, err interface{}", ctxType))
 	}
 }
@@ -272,7 +307,8 @@ func isValidHandler(vfn reflect.Value, ctxType reflect.Type, types ...reflect.Ty
 		// No context
 	} else if numIn == (typesLen + 1) {
 		// context, types
-		if fnType.In(0) != reflect.PtrTo(ctxType) {
+		firstArgType := fnType.In(0)
+		if firstArgType != reflect.PtrTo(ctxType) && firstArgType != emptyInterfaceType {
 			return false
 		}
 		typesStartIdx = 1
@@ -284,7 +320,7 @@ func isValidHandler(vfn reflect.Value, ctxType reflect.Type, types ...reflect.Ty
 		if fnType.In(typesStartIdx) != typeArg {
 			return false
 		}
-		typesStartIdx += 1
+		typesStartIdx++
 	}
 
 	return true
