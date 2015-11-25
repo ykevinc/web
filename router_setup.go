@@ -178,7 +178,7 @@ func (r *Router) OptionsHandler(fn interface{}) *Router {
 		panic("You can only set an OptionsHandler on the root router.")
 	}
 	vfn := reflect.ValueOf(fn)
-	validateOptionsHandler(vfn, r.contextType)
+	validateOptionsHandler(vfn, reflect.TypeOf(r.context))
 	r.optionsHandler = vfn
 	return r
 }
